@@ -156,8 +156,8 @@ def load_stormevents_data(
 
         # Winter season labeling
         dt = df["BEGIN_DT"]
-        df["WINTER_SEASON"] = dt.dt.year - dt.dt.month.isin(winter_months).astype(int)
-
+        df["WINTER_SEASON"] = dt.dt.year + (dt.dt.month == 12).astype(int)
+        
         # Storm-type filter
         df = df[df["EVENT_TYPE"].isin(storm_types)]
 

@@ -11,3 +11,7 @@ __pycache__/
 # Figures
 figures/
 *.png
+
+# other data
+*.csv
+*.nc

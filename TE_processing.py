@@ -43,11 +43,22 @@ LAT_MIN = 20.0
 LAT_MAX = 70.0
 
 
-def filter_tracks(all_tracks):
+def filter_tracks(all_tracks, seasons=(1996, 2025)):
     """
-    Return a dataframe containing only cyclone tracks
-    that pass through the CONUS domain at least once, 
-    and then only ones that occur in DJFM months for one time step at least
+    Return a dataframe containing only cyclone tracks that
+      1. pass through the CONUS domain at least once,
+      2. have at least one time step in the DJFM months (Dec, Jan, Feb, Mar), and
+      3. belong to a DJFM winter season within `seasons` (inclusive).
+
+    DJFM winter-season convention: December is attached to the FOLLOWING year's
+    JFM (e.g. Dec 2010 -> season 2011). Every DJFM node of a given track maps to
+    the same season -- including a track that runs from December across the
+    Dec 31 -> Jan 1 boundary into January, which stays a single track -- so the
+    season window keeps year-boundary-crossing tracks whole and only removes the
+    incomplete end seasons (a JFM-only first season with no preceding December,
+    or a December-only final season with no following JFM).
+
+    Pass seasons=None to disable the season window (month filter only).
     """
 
     valid_track_ids = []
@@ -71,6 +82,12 @@ def filter_tracks(all_tracks):
     us_tracks_djfm = us_tracks[
         us_tracks['month'].isin([12,1,2,3])
     ]
+
+    if seasons is not None:
+        ## December -> following year's JFM season; keeps Dec->Jan tracks intact
+        season = us_tracks_djfm['year'] + (us_tracks_djfm['month'] == 12).astype(int)
+        lo, hi = seasons
+        us_tracks_djfm = us_tracks_djfm[(season >= lo) & (season <= hi)]
 
     return us_tracks_djfm
 

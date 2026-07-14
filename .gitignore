@@ -12,6 +12,11 @@ __pycache__/
 figures/
 *.png
 
+# data folder
+data/
+
 # other data
 *.csv
 *.nc
+*.log
+*.txt

@@ -32,7 +32,7 @@ Usage
 Command line (dry run is the default; --download actually submits to CDS):
     python download_era5_composite.py                      # dry run
     python download_era5_composite.py --download           # submit to CDS
-    python download_era5_composite.py --etc-summary etc_summary_2.csv \
+    python download_era5_composite.py --etc-summary etc_summary_final.csv \
         --out-dir /data1/lepique/era5_TE_composite/ --download
 
 From a notebook (not recommended though):
@@ -92,7 +92,15 @@ SFC_VARS = [
     "2m_dewpoint_temperature",                 # -> d2m   (K)
     "surface_pressure",                        # -> sp    (Pa)
     "total_column_water_vapour",               # -> tcwv  (kg m-2)
+    "10m_u_component_of_wind",                 # -> u10   (m s-1) shear base + DB
+    "10m_v_component_of_wind",                 # -> v10   (m s-1) shear base + DB
 ]
+
+# Time-invariant surface geopotential (orography), single-level "geopotential".
+# Downloaded once (any date/hour) to convert plev geopotential to height AGL for
+# the derived bulk-shear calculation: elevation_m = z_sfc / 9.80665.
+OROG_VAR = "geopotential"
+OROG_FILENAME = "era5_orography.nc"
 
 # Pressure-level fields (reanalysis-era5-pressure-levels), full troposphere
 PLEV_VARS = [
@@ -109,6 +117,28 @@ PRESSURE_LEVELS = [
     "1000", "975", "950", "925", "900", "850", "800", "750", "700", "650",
     "600", "550", "500", "450", "400", "350", "300", "250", "200", "150", "100",
 ]
+
+# Extra fields added after the main download. These are fetched into their OWN
+# per-date files (prefixes era5_sfcx_ / era5_w_) so the large era5_plev_ set is
+# never re-downloaded, then folded into era5_sfc_ / era5_plev_ by
+# merge_era5_extra.py. Download them with e.g. `--only sfcx` and `--only w`.
+SFCX_VARS = [
+    "10m_wind_gust_since_previous_post_processing",  # -> fg10 (m s-1) hourly max
+    "snowfall",                                       # -> sf   (m water equiv.)
+    "total_precipitation",                            # -> tp   (m)
+    "snow_depth",                                      # -> sd   (m water equiv.)
+]
+WVARS = ["vertical_velocity"]                         # -> w    (Pa s-1), plev
+
+# Dataset registry: key -> (cds_dataset, variables, levels_or_None, file_prefix).
+# `--only <key>` restricts the run to one; the default "both" is sfc+plev (the
+# original behaviour). Data-list files are named in_data_list_<key>.txt.
+DATASETS = {
+    "sfc":  ("reanalysis-era5-single-levels",   SFC_VARS,  None,            "era5_sfc"),
+    "plev": ("reanalysis-era5-pressure-levels", PLEV_VARS, PRESSURE_LEVELS, "era5_plev"),
+    "sfcx": ("reanalysis-era5-single-levels",   SFCX_VARS, None,            "era5_sfcx"),
+    "w":    ("reanalysis-era5-pressure-levels", WVARS,     PRESSURE_LEVELS, "era5_w"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -248,27 +278,26 @@ def build_date_groups(manifest):
 # ---------------------------------------------------------------------------
 # Output bookkeeping
 # ---------------------------------------------------------------------------
-def write_data_lists(date_groups, out_dir):
+def write_data_lists(date_groups, out_dir, keys=("sfc", "plev")):
     """
-    Write the two NodeFileCompose --in_data_list files: absolute paths, one per
-    line, chronologically sorted (one file per date per dataset).
+    Write a NodeFileCompose --in_data_list file per dataset ``key`` in ``keys``:
+    absolute paths, one per line, chronologically sorted. Named
+    in_data_list_<key>.txt with files <prefix>_<date>.nc from DATASETS[key].
     """
     out_dir = Path(out_dir)
     dates = sorted(date_groups)  # YYYY-MM-DD sorts chronologically
 
-    sfc_list = out_dir / "in_data_list_sfc.txt"
-    plev_list = out_dir / "in_data_list_plev.txt"
-
-    sfc_list.write_text(
-        "\n".join(str((out_dir / f"era5_sfc_{d}.nc").resolve()) for d in dates) + "\n"
-    )
-    plev_list.write_text(
-        "\n".join(str((out_dir / f"era5_plev_{d}.nc").resolve()) for d in dates) + "\n"
-    )
-
-    print(f"  data list (sfc)  -> {sfc_list}")
-    print(f"  data list (plev) -> {plev_list}")
-    return sfc_list, plev_list
+    written = []
+    for key in keys:
+        prefix = DATASETS[key][3]
+        lst = out_dir / f"in_data_list_{key}.txt"
+        lst.write_text(
+            "\n".join(str((out_dir / f"{prefix}_{d}.nc").resolve()) for d in dates)
+            + "\n"
+        )
+        print(f"  data list ({key}) -> {lst}")
+        written.append(lst)
+    return written
 
 
 def write_manifest_csv(manifest, out_dir):
@@ -403,12 +432,17 @@ def _download_via_cdsswarm(tasks, workers):
 
 
 def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
-             expanded=None, workers=1, only="both", engine="manual"):
+             expanded=None, workers=1, only="both", engine="manual",
+             overwrite=False):
     """
     Submit CDS requests for every date in ``date_groups``.
 
     Idempotent: any output file that already exists is skipped, so the script
     is safe to re-run after an interruption (CDS requests often queue/time out).
+    Pass ``overwrite=True`` to re-download existing targets instead of skipping
+    them -- used to backfill new variables (e.g. adding 10 m winds to the sfc
+    files). The atomic ``.part``->rename in ``_retrieve_one`` means a good old
+    file is only replaced once its replacement has downloaded successfully.
     Data lists, and the manifest CSV when provided, are always (re)written -- in
     dry-run mode too -- so they reflect the planned/current contents of out_dir.
 
@@ -447,14 +481,8 @@ def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
         except Exception:
             pass
 
-    datasets = [
-        ("reanalysis-era5-single-levels", SFC_VARS, None, "era5_sfc"),
-        ("reanalysis-era5-pressure-levels", PLEV_VARS, PRESSURE_LEVELS, "era5_plev"),
-    ]
-    if only == "sfc":
-        datasets = [d for d in datasets if d[3] == "era5_sfc"]
-    elif only == "plev":
-        datasets = [d for d in datasets if d[3] == "era5_plev"]
+    keys = ["sfc", "plev"] if only == "both" else [only]
+    datasets = [DATASETS[k] for k in keys]
 
     # Build the list of pending (dataset, request, target) tasks, skipping any
     # output that already exists.
@@ -463,7 +491,7 @@ def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
         y, m, d = date.split("-")
         for dataset, vars_, levels, prefix in datasets:
             target = out_dir / f"{prefix}_{date}.nc"
-            if target.exists():
+            if target.exists() and not overwrite:
                 print(f" [skip] {target.name}")
                 continue
 
@@ -512,7 +540,7 @@ def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
                     print(f" !! FAILED {tg.name}: {e}")
 
     # Always refresh bookkeeping so it reflects current/planned out_dir contents.
-    write_data_lists(date_groups, out_dir)
+    write_data_lists(date_groups, out_dir, keys=keys)
     if manifest is not None:
         write_manifest_csv(manifest, out_dir)
     if manifest is not None and expanded is not None:
@@ -520,7 +548,7 @@ def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
 
 
 def run(etc_summary, out_dir=OUT_DIR, dry_run=True, workers=1, only="both",
-        engine="manual", **kwargs):
+        engine="manual", overwrite=False, **kwargs):
     """
     Convenience one-call pipeline: expand timestamps from ``etc_summary``,
     build date groups, and download (or preview). Extra kwargs are forwarded to
@@ -531,8 +559,43 @@ def run(etc_summary, out_dir=OUT_DIR, dry_run=True, workers=1, only="both",
     manifest, expanded = timestamps_from_etc_summary(etc_summary, **kwargs)
     date_groups = build_date_groups(manifest)
     download(date_groups, out_dir, dry_run=dry_run, manifest=manifest,
-             expanded=expanded, workers=workers, only=only, engine=engine)
+             expanded=expanded, workers=workers, only=only, engine=engine,
+             overwrite=overwrite)
     return manifest, expanded, date_groups
+
+
+def download_orography(out_dir=OUT_DIR, dry_run=True):
+    """
+    Download the time-invariant ERA5 surface geopotential (orography) for the
+    domain to ``out_dir/OROG_FILENAME``. This is a single small CDS request (one
+    arbitrary date/hour -- the field does not vary in time); ``z_sfc/9.80665``
+    then gives terrain elevation in metres, used by compute_derived_composite.py
+    to convert pressure-level geopotential to height above ground for bulk shear.
+
+    Idempotent and atomic (``.part``->rename), like the main download path.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / OROG_FILENAME
+    if target.exists():
+        print(f" [skip] {target.name} (orography already present)")
+        return target
+
+    request = {
+        "product_type": "reanalysis",
+        "variable": OROG_VAR,
+        "year": "2020", "month": "01", "day": "01", "time": "00:00",
+        "area": AREA,
+        "data_format": "netcdf",
+    }
+    if dry_run:
+        print(f" [dry] {target.name} (single-level {OROG_VAR}, area={AREA})")
+        return target
+
+    print(f" requesting {target.name} (orography) ...")
+    _retrieve_one("reanalysis-era5-single-levels", request, target)
+    print(f" -> saved {target.name}")
+    return target
 
 
 # ---------------------------------------------------------------------------
@@ -591,11 +654,27 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--only",
-        choices=["both", "sfc", "plev"],
+        choices=["both", "sfc", "plev", "sfcx", "w"],
         default="both",
-        help="Restrict to single-level ('sfc') or pressure-level ('plev') data. "
-             "Use 'sfc' for a fast first pass, then 'plev' for the slow second "
-             "pass. Default: both.",
+        help="Which dataset to fetch. 'both' (default) = sfc+plev (the original "
+             "main download). 'sfc'/'plev' restrict to one of those. 'sfcx' = the "
+             "extra single-level fields (fg10, sf, tp, sd); 'w' = pressure-level "
+             "vertical velocity. sfcx/w write their own era5_<key>_*.nc files and "
+             "in_data_list_<key>.txt, to be folded in by merge_era5_extra.py.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Re-download targets that already exist instead of skipping them. "
+             "Use to backfill new variables into existing files (e.g. adding "
+             "10 m winds to the sfc files). Default: skip existing.",
+    )
+    parser.add_argument(
+        "--orography",
+        action="store_true",
+        help="Download only the time-invariant surface geopotential (orography) "
+             f"to {OROG_FILENAME} and exit. One small request; needed by "
+             "compute_derived_composite.py for height-AGL bulk shear.",
     )
     parser.add_argument(
         "--engine",
@@ -609,6 +688,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Orography is a one-off single-level download, independent of etc_summary.
+    if args.orography:
+        download_orography(out_dir=Path(args.out_dir), dry_run=not args.download)
+        raise SystemExit(0)
+
     etc_summary = pd.read_csv(args.etc_summary)
     if COL_TIMEMAXREP not in etc_summary.columns and args.node_reports:
         node_reports = pd.read_csv(args.node_reports)
@@ -619,4 +703,5 @@ if __name__ == "__main__":
         hi = args.season_max if args.season_max is not None else "end"
         print(f"Season filter {lo}-{hi}: {len(etc_summary)} cyclones selected.")
     run(etc_summary, out_dir=Path(args.out_dir), dry_run=not args.download,
-        workers=args.workers, only=args.only, engine=args.engine)
+        workers=args.workers, only=args.only, engine=args.engine,
+        overwrite=args.overwrite)

@@ -29,6 +29,7 @@ NOC_NODEFILE="${NODEDIR}/nonoutbreak_cyclones_min_msl_cores.txt"
 
 SFC_LIST="${DATADIR}/in_data_list_sfc.txt"
 PLEV_LIST="${DATADIR}/in_data_list_plev.txt"
+DERIV_LIST="${DATADIR}/in_data_list_derived.txt"   # derived vars (theta-e, shear)
 
 #
 # Composite grid parameters
@@ -42,7 +43,7 @@ INFMT="lon,lat,msl,phis"
 # Variable table.  Format per entry:  "VAROUT:VARSPEC:LIST"
 #   VAROUT  = output filename stem (e.g. z500)
 #   VARSPEC = the --var argument, WITH level index for plev vars (e.g. z(12))
-#   LIST    = which data list to use:  sfc | plev
+#   LIST    = which data list to use:  sfc | plev | deriv
 #
 # Add or remove a line to change the variable set — nothing else to edit.
 # ---------------------------------------------------------------------------
@@ -68,6 +69,16 @@ VARIABLES=(
     "t2m:t2m:sfc"
     "d2m:d2m:sfc"
     "tcwv:tcwv:sfc"
+
+    # --- derived (compute_derived_composite.py) ---
+    # theta-e is 3-D: add more thetae(idx) lines for other levels as needed.
+    "thetae850:thetae(5):deriv"
+    "shear06:shear06:deriv"
+    "shear06_u:shear06_u:deriv"
+    "shear06_v:shear06_v:deriv"
+    "shear03:shear03:deriv"
+    "shear03_u:shear03_u:deriv"
+    "shear03_v:shear03_v:deriv"
 )
 
 # ---------------------------------------------------------------------------
@@ -115,6 +126,8 @@ for pop_entry in "${POPULATIONS[@]}"; do
 
         if [[ "${listtag}" == "plev" ]]; then
             datalist="${PLEV_LIST}"
+        elif [[ "${listtag}" == "deriv" ]]; then
+            datalist="${DERIV_LIST}"
         else
             datalist="${SFC_LIST}"
         fi

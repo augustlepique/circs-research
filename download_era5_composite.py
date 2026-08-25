@@ -433,7 +433,7 @@ def _download_via_cdsswarm(tasks, workers):
 
 def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
              expanded=None, workers=1, only="both", engine="manual",
-             overwrite=False):
+             overwrite=False, write_bookkeeping=True):
     """
     Submit CDS requests for every date in ``date_groups``.
 
@@ -443,8 +443,9 @@ def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
     them -- used to backfill new variables (e.g. adding 10 m winds to the sfc
     files). The atomic ``.part``->rename in ``_retrieve_one`` means a good old
     file is only replaced once its replacement has downloaded successfully.
-    Data lists, and the manifest CSV when provided, are always (re)written -- in
-    dry-run mode too -- so they reflect the planned/current contents of out_dir.
+    Data lists and the manifest CSV are (re)written only when
+    ``write_bookkeeping`` is True (see that parameter) -- in dry-run mode too,
+    so a bare dry run is the way to refresh them for the full period.
 
     Parameters
     ----------
@@ -466,6 +467,13 @@ def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
                   and CDS job-reuse). EXPERIMENTAL: see _download_via_cdsswarm
                   docstring for an unconfirmed FD-leak caveat -- try on a
                   small subset first and monitor /proc/<pid>/fd.
+    write_bookkeeping : write in_data_list_<key>.txt and manifest.csv (default
+                  True). These describe the ENTIRE set of dates in this run, so
+                  a season-filtered run MUST pass False: writing them would
+                  silently narrow the global lists to that one slice, and
+                  anything consuming them (NodeFileCompose) would then quietly
+                  process only part of the record with no error. The CLI sets
+                  this automatically from --season-min/--season-max.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -539,20 +547,32 @@ def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
                 except Exception as e:
                     print(f" !! FAILED {tg.name}: {e}")
 
-    # Always refresh bookkeeping so it reflects current/planned out_dir contents.
-    write_data_lists(date_groups, out_dir, keys=keys)
-    if manifest is not None:
-        write_manifest_csv(manifest, out_dir)
+    # Bookkeeping describes the whole set of dates in this run, so it is only
+    # safe to write on a full-period run. A season-filtered run would otherwise
+    # silently narrow the global lists to that slice (see write_bookkeeping).
+    if write_bookkeeping:
+        write_data_lists(date_groups, out_dir, keys=keys)
+        if manifest is not None:
+            write_manifest_csv(manifest, out_dir)
+    else:
+        print("  [bookkeeping skipped: partial run] in_data_list_*.txt and "
+              "manifest.csv left untouched.\n"
+              "  To refresh them for the full period, re-run with no "
+              "--season-min/--season-max (a bare dry run is enough).")
     if manifest is not None and expanded is not None:
         print_summary(manifest, expanded, date_groups)
 
 
 def run(etc_summary, out_dir=OUT_DIR, dry_run=True, workers=1, only="both",
-        engine="manual", overwrite=False, **kwargs):
+        engine="manual", overwrite=False, write_bookkeeping=True, **kwargs):
     """
     Convenience one-call pipeline: expand timestamps from ``etc_summary``,
     build date groups, and download (or preview). Extra kwargs are forwarded to
     ``timestamps_from_etc_summary`` (e.g. ``time_col``, ``offsets``).
+
+    Pass ``write_bookkeeping=False`` whenever ``etc_summary`` has been filtered
+    to a subset (e.g. one season), so the global in_data_list_*.txt /
+    manifest.csv are not narrowed to that slice.
 
     Returns (manifest, expanded, date_groups).
     """
@@ -560,7 +580,7 @@ def run(etc_summary, out_dir=OUT_DIR, dry_run=True, workers=1, only="both",
     date_groups = build_date_groups(manifest)
     download(date_groups, out_dir, dry_run=dry_run, manifest=manifest,
              expanded=expanded, workers=workers, only=only, engine=engine,
-             overwrite=overwrite)
+             overwrite=overwrite, write_bookkeeping=write_bookkeeping)
     return manifest, expanded, date_groups
 
 
@@ -698,10 +718,14 @@ if __name__ == "__main__":
         node_reports = pd.read_csv(args.node_reports)
         etc_summary = add_max_report_time(etc_summary, node_reports)
     etc_summary = filter_by_season(etc_summary, args.season_min, args.season_max)
-    if args.season_min is not None or args.season_max is not None:
+    # A season-filtered run covers only a slice of the record, so it must not
+    # rewrite the global data lists / manifest (they would be narrowed to that
+    # slice, and NodeFileCompose would then silently use only part of the data).
+    season_filtered = args.season_min is not None or args.season_max is not None
+    if season_filtered:
         lo = args.season_min if args.season_min is not None else "start"
         hi = args.season_max if args.season_max is not None else "end"
         print(f"Season filter {lo}-{hi}: {len(etc_summary)} cyclones selected.")
     run(etc_summary, out_dir=Path(args.out_dir), dry_run=not args.download,
         workers=args.workers, only=args.only, engine=args.engine,
-        overwrite=args.overwrite)
+        overwrite=args.overwrite, write_bookkeeping=not season_filtered)

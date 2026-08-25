@@ -55,6 +55,9 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
+import metpy.calc as mpcalc
+from metpy.units import units
+
 warnings.filterwarnings("ignore")  # metpy/pint unit + interpolation chatter
 
 # ---------------------------------------------------------------------------
@@ -66,7 +69,7 @@ DERIV_PREFIX = "era5_derived_"
 DERIV_LIST = "in_data_list_derived.txt"
 
 G = 9.80665                       # geopotential -> height
-SHEAR_HEIGHTS = {"06": 6000.0, "03": 3000.0}  # m AGL, top of each shear layer
+SHEAR_HEIGHTS = {"06": 6000.0, "03": 3000.0, "01": 1000.0}  # m AGL, top of each shear layer
 SEASON_MONTHS = (12, 1, 2, 3)     # DJFM; December attributed to following year
 DROP_ON_LOAD = []                 # keep number/expver so files match the raw set
 
@@ -140,8 +143,6 @@ def _interp_to_height(field, height, target):
 
 def compute_thetae(plev):
     """3-D equivalent potential temperature (K) from t, q on all levels."""
-    import metpy.calc as mpcalc
-    from metpy.units import units
 
     t = plev["t"].values                      # (vt, lev, lat, lon), K
     q = plev["q"].values                      # kg/kg
@@ -211,6 +212,9 @@ def build_dataset(plev, thetae, shear):
         "shear03_u": "0-3 km bulk wind shear, u-component",
         "shear03_v": "0-3 km bulk wind shear, v-component",
         "shear03":   "0-3 km bulk wind shear magnitude",
+        "shear01_u": "0-1 km bulk wind shear, u-component",
+        "shear01_v": "0-1 km bulk wind shear, v-component",
+        "shear01":   "0-1 km bulk wind shear magnitude",
     }
     for name, arr in shear.items():
         data[name] = (dims2, arr,

@@ -21,11 +21,11 @@ set -euo pipefail
 # Paths:
 NODEDIR="/home1/lepique/circs_research/data"     # where the nodefiles live
 DATADIR="/data1/lepique/era5_TE_composite"       # where in_data_list files live
-OUTDIR="/data1/lepique/composites_full"
+OUTDIR="/data1/lepique/composites_full_filtered"
 mkdir -p "${OUTDIR}"
 
-OC_NODEFILE="${NODEDIR}/outbreak_cyclones_min_msl_cores.txt"
-NOC_NODEFILE="${NODEDIR}/nonoutbreak_cyclones_min_msl_cores.txt"
+OC_NODEFILE="${NODEDIR}/outbreak_cyclones_min_msl_cores_filtered.txt"
+NOC_NODEFILE="${NODEDIR}/nonoutbreak_cyclones_min_msl_cores_filtered.txt"
 
 SFC_LIST="${DATADIR}/in_data_list_sfc.txt"
 PLEV_LIST="${DATADIR}/in_data_list_plev.txt"
@@ -58,17 +58,19 @@ VARIABLES=(
     "u250:u(17):plev"
     "v250:v(17):plev"
 
-    # --- 850 hPa winds, temperature, and moisture ---
+    # --- 850 hPa winds, temperature, moisture, and geopotential height ---
     "u850:u(5):plev"
     "v850:v(5):plev"
     "t850:t(5):plev"
     "q850:q(5):plev"
+    "z850:z(5):plev"
 
     # --- surface / single-level ---
     "msl:msl:sfc"
     "t2m:t2m:sfc"
     "d2m:d2m:sfc"
     "tcwv:tcwv:sfc"
+    "cape:cape:sfc"
 
     # --- derived (compute_derived_composite.py) ---
     # theta-e is 3-D: add more thetae(idx) lines for other levels as needed.
@@ -79,6 +81,10 @@ VARIABLES=(
     "shear03:shear03:deriv"
     "shear03_u:shear03_u:deriv"
     "shear03_v:shear03_v:deriv"
+    "shear01:shear01:deriv"
+    "shear01_u:shear01_u:deriv"
+    "shear01_v:shear01_v:deriv"
+    
 )
 
 # ---------------------------------------------------------------------------
@@ -90,6 +96,13 @@ POPULATIONS=(
 )
 
 # (aided by AI for the following code)
+#
+# --op mean and --snapshots coexist in one file: the output holds both the
+# composite mean <var>(y, x) AND the per-cyclone stack snap_<var>(snapshot, y, x)
+# (verified: nanmean(snap_<var>, axis=0) reproduces <var>). The stack is what the
+# permutation significance test reshuffles; identify each snapshot by snap_pathid
+# (0-indexed, nodefile order) since snap_time is a fill value in this build.
+# --snapshots is a bare presence flag 
 compose () {
     local nodefile="$1" datalist="$2" varspec="$3" out="$4"
     if [[ -f "${out}" ]]; then
@@ -105,6 +118,7 @@ compose () {
         --out_data         "${out}" \
         --var              "${varspec}" \
         --op               "mean" \
+        --snapshots \
         --max_time_delta   "${TIMEDELTA}" \
         --dx               "${DX}" \
         --resx             "${RESX}" \
@@ -112,6 +126,7 @@ compose () {
         --latname          "latitude" \
         --regional
 }
+
 
 # ---------------------------------------------------------------------------
 # Driver: loop populations x variables
@@ -132,10 +147,10 @@ for pop_entry in "${POPULATIONS[@]}"; do
             datalist="${SFC_LIST}"
         fi
 
-        out="${OUTDIR}/${pop_tag}_${varout}.nc"
+        out="${OUTDIR}/${pop_tag}_min_msl_${varout}.nc"
         compose "${nodefile}" "${datalist}" "${varspec}" "${out}"
     done
 done
 
 echo "==================== DONE ===================="
-echo "Composites written to ${OUTDIR}"
+echo "Composites (mean + per-cyclone snapshots) written to ${OUTDIR}"

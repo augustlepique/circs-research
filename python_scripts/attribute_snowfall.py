@@ -41,7 +41,7 @@ Usage
     python attribute_snowfall.py --product era5 --dry-run
     python attribute_snowfall.py --product era5
     python attribute snowfall.py --product nohrsc
-    python attribute_snowfall.py --product era5 --cap 10    # a sensitivity sweep
+    python attribute_snowfall.py --product era5 --cap 10    # a sensitivity sweep if desired
 """
 
 import argparse

@@ -13,9 +13,17 @@ only unique on the full sphere, so the spherical-harmonic inversion
 0.5 deg grid loses nothing (~58 GB total vs ~230 GB at 0.25 deg). v_chi is later
 interpolated onto the regional 0.25 deg grid of the era5_pv_ files.
 
-Timestamps (cyclone min-MSL time +/- offsets, plus outbreak max-report hours)
-are built with the SAME functions as download_era5_composite.py, so every
-era5_divg_ file matches an era5_plev_ / era5_pv_ file date-for-date.
+Timestamps are the UNION of both composite sets, so one download serves both:
+  * min-MSL reference times (+/- offsets, plus outbreak max-report hours), built
+    with the SAME functions as download_era5_composite.py
+  * core onset/peak lag times from needed_times.csv, as in download_era5_onset.py
+Because the field is global, there is no domain mismatch between the two sets:
+v_chi is interpolated onto whichever regional grid each composite directory uses.
+Each era5_divg_<date>.nc holds every hour of that date needed by EITHER set.
+
+Existing files are skipped, so if needed_times.csv (or etc_summary) later gains
+hours on a date that already has a file, re-download those dates with
+--overwrite -- otherwise they silently lack the new hours.
 
 Produces, in ``OUT_DIR``:
   era5_divg_<YYYY-MM-DD>.nc   divergence d (s-1) at 300/250/200 hPa, global
@@ -43,8 +51,10 @@ from download_era5_composite import (
     add_max_report_time,
     build_date_groups,
     filter_by_season,
+    season_year,
     timestamps_from_etc_summary,
 )
+from download_era5_onset import NEEDED, needed_hours
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -52,7 +62,7 @@ from download_era5_composite import (
 DATASET = "reanalysis-era5-pressure-levels"
 DIV_VARS = ["divergence"]                    # -> d  (s-1)
 DIV_LEVELS = ["300", "250", "200"]           # 300-200 hPa outflow layer
-GRID = [0.5, 0.5]                            # global, regridded by CDS
+GRID = [0.5, 0.5]                            # global, lower resolution than 0.25, 0.25 (for storage)
 PREFIX = "era5_divg"
 DATA_LIST = "in_data_list_divg.txt"
 
@@ -71,6 +81,19 @@ def build_request(date, hours):
         "grid": GRID,
         "data_format": "netcdf",
     }
+
+
+def onset_manifest(needed_csv, season_min=None, season_max=None):
+    """(date, hour) rows for the onset/peak lag times, season-filtered like
+    filter_by_season (December belongs to the following year's season)."""
+    need = needed_hours(needed_csv)
+    sy = need.apply(season_year)
+    if season_min is not None:
+        need = need[sy >= season_min]
+    if season_max is not None:
+        need = need[sy <= season_max]
+    return pd.DataFrame({"date": need.dt.strftime("%Y-%m-%d"),
+                         "hour": need.dt.strftime("%H:00")})
 
 
 def write_data_list(date_groups, out_dir):
@@ -136,9 +159,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Download global ERA5 upper-level divergence for ETC compositing."
     )
-    parser.add_argument("--etc-summary", default="data/etc_summary_final.csv",
+    parser.add_argument("--etc-summary", default="/home1/lepique/circs_research/data/etc_summary_final.csv",
                         help="CSV with 'track_id' and 'time_min_msl' columns.")
-    parser.add_argument("--node-reports", default="data/nodes_with_reports_final.csv",
+    parser.add_argument("--node-reports", default="/home1/lepique/circs_research/data/nodes_with_reports_final.csv",
                         help="Per-node report counts, used for the max-report hour "
                              "when 'time_max_reports' is absent from --etc-summary.")
     parser.add_argument("--out-dir", default=str(OUT_DIR),
@@ -151,6 +174,10 @@ if __name__ == "__main__":
                         help="Only cyclones whose DJFM season year is >= this.")
     parser.add_argument("--season-max", type=int, default=None,
                         help="Only cyclones whose DJFM season year is <= this.")
+    parser.add_argument("--needed", default=str(NEEDED),
+                        help=f"Onset/peak needed_times.csv (default: {NEEDED}).")
+    parser.add_argument("--no-onset", action="store_true",
+                        help="Skip the onset/peak hours (min-MSL times only).")
     parser.add_argument("--overwrite", action="store_true",
                         help="Re-download targets that already exist.")
     args = parser.parse_args()
@@ -165,6 +192,15 @@ if __name__ == "__main__":
               f"{len(etc_summary)} cyclones selected.")
 
     manifest, _ = timestamps_from_etc_summary(etc_summary)
+    manifest = manifest[["date", "hour"]]
+    n_msl = build_date_groups(manifest)
+    if not args.no_onset:
+        onset = onset_manifest(args.needed, args.season_min, args.season_max)
+        manifest = pd.concat([manifest, onset]).drop_duplicates()
+        n_onset = build_date_groups(onset)
+        print(f"min-MSL: {len(n_msl)} dates | onset: {len(n_onset)} dates "
+              f"({len(set(n_onset) - set(n_msl))} not in min-MSL) | "
+              f"union: {len(manifest)} hours")
     download(build_date_groups(manifest), out_dir=Path(args.out_dir),
              dry_run=not args.download, workers=args.workers,
              overwrite=args.overwrite, write_bookkeeping=not season_filtered)

@@ -10,14 +10,22 @@
 
 set -euo pipefail
 
-NODEDIR="/home1/lepique/circs_research/data/development_month1to1"
+# SAMPLE selects the population: unset/"" = fixed sample (same 44 cyclones at every
+# lead), "_varn" = every pair with a node at that lead (n varies with lead).
+# Nodefiles and composites share the suffix, so they can't be mixed up.
+SAMPLE="${SAMPLE:-}"
+NODEDIR="/home1/lepique/circs_research/data/development_month1to1${SAMPLE}"
 DATADIR="/data1/lepique/era5_TE_composite"
-OUTDIR="/data1/lepique/composites_dev_month1to1"
+OUTDIR="/data1/lepique/composites_dev_month1to1${SAMPLE}"
 mkdir -p "${OUTDIR}"
 
 SFC_LIST="${DATADIR}/in_data_list_sfc.txt"
 PLEV_LIST="${DATADIR}/in_data_list_plev.txt"
 DERIV_LIST="${DATADIR}/in_data_list_derived.txt"
+IRROT_LIST="${DATADIR}/in_data_list_irrot.txt"     # irrotational wind + PV advection (compute_irrotational.py)
+PV_LIST="${DATADIR}/in_data_list_pv.txt"           # PV, all 21 levels (download_era5_composite.py --only pv)
+W_LIST="${DATADIR}/in_data_list_w.txt"             # omega, all 21 levels (--only w)
+
 
 DX=1.0
 RESX=80
@@ -56,6 +64,27 @@ VARIABLES=(
     "shear01:shear01:deriv"
     "shear01_u:shear01_u:deriv"
     "shear01_v:shear01_v:deriv"
+
+    # In era5_TE_composite, pv and w are in their own era5_pv_ / era5_w_ files
+    # (not the plev files); both hold all 21 levels, so the plev index map applies.
+    "pv850:pv(5):pv"           # low-level (diabatically generated) PV
+    "pv500:pv(12):pv"          # mid-level PV
+    "pv300:pv(16):pv"          # upper-level PV (tropopause / stratospheric intrusions)
+    "w700:w(8):w"              # omega, Pa s-1 (negative = ascent)
+    "w500:w(12):w"
+    # cp is not downloaded for era5_TE_composite (only the onset sfc files have it)
+    #"cp:cp:sfc"               # convective precip, m, 1-h accumulation ending at valid time
+    
+    # --- irrotational wind + PV advection by it (compute_irrotational.py) ---
+    # 3-D irrot fields hold only 300/250/200 hPa: idx 0 = 300, 1 = 250, 2 = 200
+    "uchi_l:uchi_l:irrot"               # 300-200 hPa layer means
+    "vchi_l:vchi_l:irrot"
+    "pv_l:pv_l:irrot"
+    "pvadv_chi_l:pvadv_chi_l:irrot"     # K m2 kg-1 s-2; x 1e6 x 86400 = PVU/day
+    "chi250:chi(1):irrot"               # 250 hPa velocity potential
+    "uchi250:uchi(1):irrot"
+    "vchi250:vchi(1):irrot"
+    "pvadv_chi250:pvadv_chi(1):irrot"
 )
 
 compose () {
@@ -96,6 +125,9 @@ for lead in "${LEADS[@]}"; do
             case "${listtag}" in
                 plev)  datalist="${PLEV_LIST}" ;;
                 deriv) datalist="${DERIV_LIST}" ;;
+                irrot) datalist="${IRROT_LIST}" ;;
+                pv)    datalist="${PV_LIST}" ;;
+                w)     datalist="${W_LIST}" ;;
                 *)     datalist="${SFC_LIST}" ;;
             esac
             compose "${nodefile}" "${datalist}" "${varspec}" \

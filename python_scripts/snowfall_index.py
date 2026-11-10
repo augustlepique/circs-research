@@ -28,9 +28,8 @@ Properties worth knowing before index interpretation:
 - Duration leaks into extent. A storm total is the sum of daily caps over the 
 lifecycle, so a slow 10-day storm sweeps a far larger footprint than a quick
 two day storm of equal intensity. True for regular RSI index as well.
-- Climatology is self referential and built from overlapping footprints. 
-Caps of co0existing cyclones overlap so the same snowfall can enter several storms'
-areas. A(bar) is thus inflated. 
+- Climatology is self referential and may be built from overlapping footprints. 
+
 
 Usage
 ------

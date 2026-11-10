@@ -27,6 +27,12 @@ The full multi-level download is intentional: derived parameters (MUCAPE,
 SREH, EHI, lifted index, 850 theta-e, 500 hPa height/vorticity, 300/850 winds,
 ...) are computed later at the analysis stage with metpy, not at download time.
 
+The single-level request mixes GRIB stepTypes (instantaneous fields, the
+sf/tp/cp accumulations, and the fg10 maximum), so CDS returns a zip of one
+netCDF per stepType under the requested .nc name. ``_unzip_to_netcdf`` merges
+those back into one real netCDF as part of every download, which needs xarray:
+run downloads in the ``storm`` env (the ``era5`` env has cdsapi but no xarray).
+
 Usage
 -----
 Command line (dry run is the default; --download actually submits to CDS):
@@ -52,7 +58,10 @@ CDS-Beta API notes (current requirements):
 """
 
 import argparse
+import importlib.util
+import tempfile
 import threading
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -64,7 +73,7 @@ OUT_DIR = Path("/data1/lepique/era5_TE_composite/")
 
 # ERA5 domain [N, W, S, E]. Generous enough for a ~20 deg composite radius
 # around cyclones as far south as ~27 N.
-AREA = [70, -140, -10, -50]
+AREA = [80, -180, -5, -20]
 
 # Reference-time offsets relative to each cyclone's min-MSL time (hours).
 OFFSET_HOURS = [-24, -18, -12, -6, 0, 6, 12, 18, 24]
@@ -94,6 +103,11 @@ SFC_VARS = [
     "total_column_water_vapour",               # -> tcwv  (kg m-2)
     "10m_u_component_of_wind",                 # -> u10   (m s-1) shear base + DB
     "10m_v_component_of_wind",                 # -> v10   (m s-1) shear base + DB
+    "snow_depth",                              # -> sd    (m water equiv.)
+    "snowfall",                                # -> sf    (m water equiv.) accum
+    "total_precipitation",                     # -> tp    (m) accum
+    "convective_precipitation",                # -> cp    (m) accum
+    "10m_wind_gust_since_previous_post_processing",  # -> fg10 (m s-1) hourly max
 ]
 
 # Time-invariant surface geopotential (orography), single-level "geopotential".
@@ -111,6 +125,8 @@ PLEV_VARS = [
     "v_component_of_wind",    # -> v   (m s-1)
     "geopotential",           # -> z   (m2 s-2)
     "vorticity",              # -> vo  (s-1) relative vorticity
+    "potential_vorticity",    # -> pv  (K m2 kg-1 s-1)
+    "vertical_velocity",      # -> w   ( Pa s-1)
 ]
 
 PRESSURE_LEVELS = [
@@ -118,26 +134,12 @@ PRESSURE_LEVELS = [
     "600", "550", "500", "450", "400", "350", "300", "250", "200", "150", "100",
 ]
 
-# Extra fields added after the main download. These are fetched into their OWN
-# per-date files (prefixes era5_sfcx_ / era5_w_) so the large era5_plev_ set is
-# never re-downloaded, then folded into era5_sfc_ / era5_plev_ by
-# merge_era5_extra.py. Download them with e.g. `--only sfcx` and `--only w`.
-SFCX_VARS = [
-    "10m_wind_gust_since_previous_post_processing",  # -> fg10 (m s-1) hourly max
-    "snowfall",                                       # -> sf   (m water equiv.)
-    "total_precipitation",                            # -> tp   (m)
-    "snow_depth",                                      # -> sd   (m water equiv.)
-]
-WVARS = ["vertical_velocity"]                         # -> w    (Pa s-1), plev
-
 # Dataset registry: key -> (cds_dataset, variables, levels_or_None, file_prefix).
-# `--only <key>` restricts the run to one; the default "both" is sfc+plev (the
-# original behaviour). Data-list files are named in_data_list_<key>.txt.
+# `--only <key>` restricts the run to one; the default "both" is sfc+plev.
+# Data-list files are named in_data_list_<key>.txt.
 DATASETS = {
     "sfc":  ("reanalysis-era5-single-levels",   SFC_VARS,  None,            "era5_sfc"),
     "plev": ("reanalysis-era5-pressure-levels", PLEV_VARS, PRESSURE_LEVELS, "era5_plev"),
-    "sfcx": ("reanalysis-era5-single-levels",   SFCX_VARS, None,            "era5_sfcx"),
-    "w":    ("reanalysis-era5-pressure-levels", WVARS,     PRESSURE_LEVELS, "era5_w"),
 }
 
 
@@ -376,11 +378,45 @@ def _retrieve_one(dataset, request, target):
     interrupted/failed request can never leave a partial file that the
     skip-existing logic would later mistake for a completed download. Reuses
     this thread's cdsapi client (see ``_get_client``) to avoid leaking sockets.
+    A zipped multi-stepType response is unpacked before the rename, so a file
+    with the real name is always a single netCDF.
     """
     tmp = target.with_name(target.name + ".part")
     _get_client().retrieve(dataset, request, str(tmp))
+    _unzip_to_netcdf(tmp)
     tmp.replace(target)  # same-dir rename: only a complete file gets the real name
     return target.name
+
+
+def _unzip_to_netcdf(path):
+    """
+    If ``path`` is a CDS zip (one netCDF per GRIB stepType: instant / accum /
+    max), merge its members into a single netCDF written back to ``path``.
+    No-op for a plain netCDF. The members share valid_time, grid and
+    number/expver, so ``join="exact"`` only ever raises on a malformed zip
+    rather than NaN-padding. Each variable keeps the encoding (dtype,
+    compression, time units) it had in its member file.
+    """
+    path = Path(path)
+    if not zipfile.is_zipfile(path):
+        return
+    import xarray as xr  # lazy: only needed when CDS returns a zip
+
+    with tempfile.TemporaryDirectory(dir=path.parent, prefix=f".{path.name}.") as tmpdir:
+        parts = []
+        with zipfile.ZipFile(path) as zf:
+            for name in zf.namelist():
+                if not name.endswith(".nc"):
+                    continue
+                member = Path(tmpdir) / Path(name).name
+                member.write_bytes(zf.read(name))
+                with xr.open_dataset(member) as ds:
+                    parts.append(ds.load())
+        merged = xr.merge(parts, join="exact", compat="no_conflicts",
+                          combine_attrs="drop_conflicts")
+        out = Path(tmpdir) / "merged.nc"
+        merged.to_netcdf(out)
+        out.replace(path)
 
 
 def _download_via_cdsswarm(tasks, workers):
@@ -425,6 +461,11 @@ def _download_via_cdsswarm(tasks, workers):
     for r in results:
         target = part_to_target[r.task.target]
         if r.success:
+            try:
+                _unzip_to_netcdf(r.task.target)
+            except Exception as e:
+                print(f" !! FAILED {target.name} (unzip): {e}")
+                continue
             Path(r.task.target).replace(target)
             print(f" -> saved {target.name}")
         else:
@@ -521,6 +562,12 @@ def download(date_groups, out_dir=OUT_DIR, dry_run=True, manifest=None,
                 print(f" [dry] {target.name} hours={hours} vars={len(vars_)}{lv}")
             else:
                 tasks.append((dataset, request, target))
+
+    # Fail before submitting anything: without xarray every zipped sfc response
+    # would download and then fail to unpack.
+    if not dry_run and tasks and importlib.util.find_spec("xarray") is None:
+        raise SystemExit("ERROR: xarray is needed to unpack CDS zip responses; "
+                         "run this in the storm env.")
 
     if not dry_run and tasks:
         print(f" submitting {len(tasks)} request(s) with {workers} worker(s) "
@@ -627,7 +674,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--etc-summary",
-        default="data/etc_summary_final.csv",
+        default="/home1/lepique/circs_research/data/etc_summary_final.csv",
         help="CSV with 'track_id' and 'time_min_msl' columns "
              "(default: data/etc_summary_final.csv).",
     )
@@ -638,7 +685,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--node-reports",
-        default="data/nodes_with_reports_final.csv",
+        default="/home1/lepique/circs_research/data/nodes_with_reports_final.csv",
         help="Per-node report-count CSV, used to compute the hour of maximum "
              "reports when 'time_max_reports' is absent from --etc-summary "
              "(default: data/nodes_with_reports_final.csv).",
@@ -674,13 +721,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--only",
-        choices=["both", "sfc", "plev", "sfcx", "w"],
+        choices=["both", "sfc", "plev"],
         default="both",
-        help="Which dataset to fetch. 'both' (default) = sfc+plev (the original "
-             "main download). 'sfc'/'plev' restrict to one of those. 'sfcx' = the "
-             "extra single-level fields (fg10, sf, tp, sd); 'w' = pressure-level "
-             "vertical velocity. sfcx/w write their own era5_<key>_*.nc files and "
-             "in_data_list_<key>.txt, to be folded in by merge_era5_extra.py.",
+        help="Which dataset to fetch. 'both' (default) = sfc+plev. "
+             "'sfc'/'plev' restrict to one of those.",
     )
     parser.add_argument(
         "--overwrite",

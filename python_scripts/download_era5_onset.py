@@ -19,9 +19,10 @@ needs z_sfc on the same grid as the plev/sfc files for height-AGL shear). The
 first real download writes AREA.txt; later runs refuse to add files if AREA has
 changed since, so the directory can never hold a mix of domains.
 
-Steps (run from python_scripts/, era5 env for the download, storm for derived):
-    python download_era5_onset.py                         # dry run: counts + requests
-    python download_era5_onset.py --download --workers 3  # submit to CDS (sfc + plev + orography)
+Steps (run from python_scripts/ in the storm env -- the download unpacks CDS's
+zipped sfc responses with xarray, which the era5 env lacks):
+    $STORM download_era5_onset.py                         # dry run: counts + requests
+    $STORM download_era5_onset.py --download --workers 3  # submit to CDS (sfc + plev + orography)
     $STORM compute_derived_composite.py --data-dir /data1/lepique/era5_TE_composite_onset --run --workers 4
 
 DISCLAIMER: Script made with help from claude code
@@ -51,7 +52,7 @@ def check_area(out_dir, area=dec.AREA, record=False):
     """Refuse to add to a directory downloaded on another AREA: download() skips
     existing date files, so a changed AREA would otherwise silently leave a mix
     of domains. The AREA of a directory is recorded in AREA.txt on its first
-    real download (the era5 env has no netCDF reader to inspect the files)."""
+    real download."""
     out_dir = Path(out_dir)
     marker = out_dir / "AREA.txt"
     has_data = any(out_dir.glob("era5_*_*.nc"))

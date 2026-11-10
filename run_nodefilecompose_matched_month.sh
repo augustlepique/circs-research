@@ -18,10 +18,15 @@ OUTDIR="/data1/lepique/composites_matched_month1to1"
 mkdir -p "${OUTDIR}"
 
 NOC_NODEFILE="${NODEDIR}/nonoutbreak_cyclones_min_msl_cores_matched_month1to1.txt"
+OC_NODEFILE="${NODEDIR}/outbreak_cyclones_min_msl_cores_filtered.txt"   # same OC population as composites_full_filtered
 
 SFC_LIST="${DATADIR}/in_data_list_sfc.txt"
 PLEV_LIST="${DATADIR}/in_data_list_plev.txt"
 DERIV_LIST="${DATADIR}/in_data_list_derived.txt"
+IRROT_LIST="${DATADIR}/in_data_list_irrot.txt"     # irrotational wind + PV advection (compute_irrotational.py)
+PV_LIST="${DATADIR}/in_data_list_pv.txt"           # PV, all 21 levels (download_era5_composite.py --only pv)
+W_LIST="${DATADIR}/in_data_list_w.txt"             # omega, all 21 levels (--only w)
+
 
 DX=1.0
 RESX=80
@@ -45,6 +50,7 @@ VARIABLES=(
     "d2m:d2m:sfc"
     "tcwv:tcwv:sfc"
     "cape:cape:sfc"
+    
     "thetae850:thetae(5):deriv"
     "shear06:shear06:deriv"
     "shear06_u:shear06_u:deriv"
@@ -55,6 +61,27 @@ VARIABLES=(
     "shear01:shear01:deriv"
     "shear01_u:shear01_u:deriv"
     "shear01_v:shear01_v:deriv"
+
+    # In era5_TE_composite, pv and w are in their own era5_pv_ / era5_w_ files
+    # (not the plev files); both hold all 21 levels, so the plev index map applies.
+    "pv850:pv(5):pv"           # low-level (diabatically generated) PV
+    "pv500:pv(12):pv"          # mid-level PV
+    "pv300:pv(16):pv"          # upper-level PV (tropopause / stratospheric intrusions)
+    "w700:w(8):w"              # omega, Pa s-1 (negative = ascent)
+    "w500:w(12):w"
+    # cp is not downloaded for era5_TE_composite yet (only the onset sfc files have it)
+    #"cp:cp:sfc"               # convective precip, m, 1-h accumulation ending at valid time
+
+    # --- irrotational wind + PV advection by it (compute_irrotational.py) ---
+    # 3-D irrot fields hold only 300/250/200 hPa: idx 0 = 300, 1 = 250, 2 = 200
+    "uchi_l:uchi_l:irrot"               # 300-200 hPa layer means
+    "vchi_l:vchi_l:irrot"
+    "pv_l:pv_l:irrot"
+    "pvadv_chi_l:pvadv_chi_l:irrot"     # K m2 kg-1 s-2; x 1e6 x 86400 = PVU/day
+    "chi250:chi(1):irrot"               # 250 hPa velocity potential
+    "uchi250:uchi(1):irrot"
+    "vchi250:vchi(1):irrot"
+    "pvadv_chi250:pvadv_chi(1):irrot"
 )
 
 compose () {
@@ -82,9 +109,21 @@ compose () {
 }
 
 
-echo "==================== copying unchanged OC composites ===================="
+# data list for a variable-table LIST tag
+datalist_for () {
+    case "$1" in
+        plev)  echo "${PLEV_LIST}" ;;
+        deriv) echo "${DERIV_LIST}" ;;
+        irrot) echo "${IRROT_LIST}" ;;
+        pv)    echo "${PV_LIST}" ;;
+        w)     echo "${W_LIST}" ;;
+        *)     echo "${SFC_LIST}" ;;
+    esac
+}
+
+echo "==================== OC: copy unchanged composites, compute new ones ===================="
 for var_entry in "${VARIABLES[@]}"; do
-    IFS=":" read -r varout _ _ <<< "${var_entry}"
+    IFS=":" read -r varout varspec listtag <<< "${var_entry}"
     src="${SRCDIR}/oc_min_msl_${varout}.nc"
     dst="${OUTDIR}/oc_min_msl_${varout}.nc"
     if [[ -f "${dst}" ]]; then
@@ -93,21 +132,16 @@ for var_entry in "${VARIABLES[@]}"; do
         cp "${src}" "${dst}"
         echo "  [copy] $(basename "${src}")"
     else
-        echo "  !! MISSING source: ${src}"
+        # not in composites_full_filtered (e.g. pv, w, the irrotational-wind
+        # fields): compute it from the same OC population
+        compose "${OC_NODEFILE}" "$(datalist_for "${listtag}")" "${varspec}" "${dst}"
     fi
 done
 
 echo "==================== NOC (matched 1:2) ===================="
 for var_entry in "${VARIABLES[@]}"; do
     IFS=":" read -r varout varspec listtag <<< "${var_entry}"
-
-    if [[ "${listtag}" == "plev" ]]; then
-        datalist="${PLEV_LIST}"
-    elif [[ "${listtag}" == "deriv" ]]; then
-        datalist="${DERIV_LIST}"
-    else
-        datalist="${SFC_LIST}"
-    fi
+    datalist="$(datalist_for "${listtag}")"
 
     out="${OUTDIR}/noc_min_msl_${varout}.nc"
     compose "${NOC_NODEFILE}" "${datalist}" "${varspec}" "${out}"

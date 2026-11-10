@@ -34,6 +34,10 @@ mkdir -p "${OUTDIR}"
 SFC_LIST="${DATADIR}/in_data_list_sfc.txt"
 PLEV_LIST="${DATADIR}/in_data_list_plev.txt"
 DERIV_LIST="${DATADIR}/in_data_list_derived.txt"   # derived vars (theta-e, shear)
+IRROT_LIST="${DATADIR}/in_data_list_irrot.txt"     # irrotational wind + PV advection (compute_irrotational.py)
+PV_LIST="${DATADIR}/in_data_list_pv.txt"           # PV, all 21 levels (download_era5_composite.py --only pv)
+W_LIST="${DATADIR}/in_data_list_w.txt"             # omega, all 21 levels (--only w)
+
 
 # Composite grid parameters
 DX=1.0
@@ -45,7 +49,7 @@ INFMT="lon,lat,msl,phis"
 # Variable table.  Format per entry:  "VAROUT:VARSPEC:LIST"
 #   VAROUT  = output filename stem (e.g. z500)
 #   VARSPEC = the --var argument, WITH level index for plev vars (e.g. z(12))
-#   LIST    = which data list to use:  sfc | plev | deriv
+#   LIST    = which data list to use:  sfc | plev | deriv | irrot | pv | w
 #
 
 VARIABLES=(
@@ -84,6 +88,27 @@ VARIABLES=(
     "shear01:shear01:deriv"
     "shear01_u:shear01_u:deriv"
     "shear01_v:shear01_v:deriv"
+    
+    # In era5_TE_composite, pv and w are in their own era5_pv_ / era5_w_ files
+    # (not the plev files); both hold all 21 levels, so the plev index map applies.
+    "pv850:pv(5):pv"           # low-level (diabatically generated) PV
+    "pv500:pv(12):pv"          # mid-level PV
+    "pv300:pv(16):pv"          # upper-level PV (tropopause / stratospheric intrusions)
+    "w700:w(8):w"              # omega, Pa s-1 (negative = ascent)
+    "w500:w(12):w"
+    # cp is not downloaded for era5_TE_composite (only the onset sfc files have it)
+    #"cp:cp:sfc"               # convective precip, m, 1-h accumulation ending at valid time
+
+    # --- irrotational wind + PV advection by it (compute_irrotational.py) ---
+    # 3-D irrot fields hold only 300/250/200 hPa: idx 0 = 300, 1 = 250, 2 = 200
+    "uchi_l:uchi_l:irrot"               # 300-200 hPa layer means
+    "vchi_l:vchi_l:irrot"
+    "pv_l:pv_l:irrot"
+    "pvadv_chi_l:pvadv_chi_l:irrot"     # K m2 kg-1 s-2; x 1e6 x 86400 = PVU/day
+    "chi250:chi(1):irrot"               # 250 hPa velocity potential
+    "uchi250:uchi(1):irrot"
+    "vchi250:vchi(1):irrot"
+    "pvadv_chi250:pvadv_chi(1):irrot"
 
 )
 
@@ -155,6 +180,12 @@ for pop_entry in "${POPULATIONS[@]}"; do
             datalist="${PLEV_LIST}"
         elif [[ "${listtag}" == "deriv" ]]; then
             datalist="${DERIV_LIST}"
+        elif [[ "${listtag}" == "irrot" ]]; then
+            datalist="${IRROT_LIST}"
+        elif [[ "${listtag}" == "pv" ]]; then
+            datalist="${PV_LIST}"
+        elif [[ "${listtag}" == "w" ]]; then
+            datalist="${W_LIST}"
         else
             datalist="${SFC_LIST}"
         fi

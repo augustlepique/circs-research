@@ -20,6 +20,8 @@ mkdir -p "${OUTDIR}"
 SFC_LIST="${DATADIR}/in_data_list_sfc.txt"
 PLEV_LIST="${DATADIR}/in_data_list_plev.txt"
 DERIV_LIST="${DATADIR}/in_data_list_derived.txt"
+IRROT_LIST="${DATADIR}/in_data_list_irrot.txt"     # irrotational wind + PV advection (compute_irrotational.py)
+
 
 DX=1.0
 RESX=80
@@ -58,6 +60,26 @@ VARIABLES=(
     "shear01:shear01:deriv"
     "shear01_u:shear01_u:deriv"
     "shear01_v:shear01_v:deriv"
+    
+    # Added for the onset/peak set (only in era5_TE_composite_onset files).
+    # Level index = position in the 21-level list 1000..100 hPa:
+    # 5 = 850, 8 = 700, 12 = 500, 16 = 300.
+    "pv850:pv(5):plev"         # low-level (diabatically generated) PV
+    "pv500:pv(12):plev"        # mid-level PV
+    "pv300:pv(16):plev"        # upper-level PV (tropopause / stratospheric intrusions)
+    "w700:w(8):plev"           # omega, Pa s-1 (negative = ascent)
+    "w500:w(12):plev"
+    "cp:cp:sfc"                # convective precip, m, 1-h accumulation ending at valid time
+    # --- irrotational wind + PV advection by it (compute_irrotational.py) ---
+    # 3-D irrot fields hold only 300/250/200 hPa: idx 0 = 300, 1 = 250, 2 = 200
+    "uchi_l:uchi_l:irrot"               # 300-200 hPa layer means
+    "vchi_l:vchi_l:irrot"
+    "pv_l:pv_l:irrot"
+    "pvadv_chi_l:pvadv_chi_l:irrot"     # K m2 kg-1 s-2; x 1e6 x 86400 = PVU/day
+    "chi250:chi(1):irrot"               # 250 hPa velocity potential
+    "uchi250:uchi(1):irrot"
+    "vchi250:vchi(1):irrot"
+    "pvadv_chi250:pvadv_chi(1):irrot"
 )
 
 compose () {
@@ -98,6 +120,7 @@ for lag in "${LAGS[@]}"; do
             case "${listtag}" in
                 plev)  datalist="${PLEV_LIST}" ;;
                 deriv) datalist="${DERIV_LIST}" ;;
+                irrot) datalist="${IRROT_LIST}" ;;
                 *)     datalist="${SFC_LIST}" ;;
             esac
             compose "${nodefile}" "${datalist}" "${varspec}" \

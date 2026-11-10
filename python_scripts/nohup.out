@@ -1,0 +1,64 @@
+Paired dates selected: 496
+Orography loaded: elevation min/mean/max = -92 / 211 / 3748 m
+ [ok]   era5_derived_1996-01-25.nc
+ [ok]   era5_derived_1996-01-27.nc
+Traceback (most recent call last):
+  File "/home1/lepique/circs_research/python_scripts/compute_derived_composite.py", line 354, in main
+    for fut in as_completed(futs):
+               ~~~~~~~~~~~~^^^^^^
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/concurrent/futures/_base.py", line 237, in as_completed
+    waiter.event.wait(wait_timeout)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/threading.py", line 670, in wait
+    signaled = self._cond.wait(timeout)
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/threading.py", line 369, in wait
+    waiter.acquire()
+    ~~~~~~~~~~~~~~^^
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home1/lepique/circs_research/python_scripts/compute_derived_composite.py", line 373, in <module>
+    main()
+    ~~~~^^
+  File "/home1/lepique/circs_research/python_scripts/compute_derived_composite.py", line 351, in main
+    with ProcessPoolExecutor(max_workers=args.workers) as ex:
+         ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/concurrent/futures/_base.py", line 667, in __exit__
+    self.shutdown(wait=True)
+    ~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/concurrent/futures/process.py", line 865, in shutdown
+    self._executor_manager_thread.join()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/threading.py", line 1133, in join
+    self._os_thread_handle.join(timeout)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/home1/lepique/circs_research/python_scripts/download_era5_divergence.py", line 158, in <module>
+    etc_summary = pd.read_csv(args.etc_summary)
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/site-packages/pandas/io/parsers/readers.py", line 1026, in read_csv
+    return _read(filepath_or_buffer, kwds)
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/site-packages/pandas/io/parsers/readers.py", line 620, in _read
+    parser = TextFileReader(filepath_or_buffer, **kwds)
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/site-packages/pandas/io/parsers/readers.py", line 1620, in __init__
+    self._engine = self._make_engine(f, self.engine)
+                   ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/site-packages/pandas/io/parsers/readers.py", line 1880, in _make_engine
+    self.handles = get_handle(
+                   ~~~~~~~~~~^
+        f,
+        ^^
+    ...<6 lines>...
+        storage_options=self.options.get("storage_options", None),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home1/lepique/miniforge3/envs/storm/lib/python3.14/site-packages/pandas/io/common.py", line 873, in get_handle
+    handle = open(
+        handle,
+    ...<3 lines>...
+        newline="",
+    )
+FileNotFoundError: [Errno 2] No such file or directory: 'data/etc_summary_final.csv'

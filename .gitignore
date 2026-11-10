@@ -20,3 +20,4 @@ data/
 *.nc
 *.log
 *.txt
+energy_analysis/

@@ -36,6 +36,7 @@ NEITHER_NODEFILE="${NODEDIR}/neither_cyclones_min_msl_cores_filtered.txt"
 SFC_LIST="${DATADIR}/in_data_list_sfc.txt"
 PLEV_LIST="${DATADIR}/in_data_list_plev.txt"
 DERIV_LIST="${DATADIR}/in_data_list_derived.txt"   # derived vars (theta-e, shear)
+IRROT_LIST="${DATADIR}/in_data_list_irrot.txt"     # irrotational wind + PV advection (compute_irrotational.py)
 
 # Composite grid parameters
 DX=1.0
@@ -47,7 +48,7 @@ INFMT="lon,lat,msl,phis"
 # Variable table.  Format per entry:  "VAROUT:VARSPEC:LIST"
 #   VAROUT  = output filename stem (e.g. z500)
 #   VARSPEC = the --var argument, WITH level index for plev vars (e.g. z(12))
-#   LIST    = which data list to use:  sfc | plev | deriv
+#   LIST    = which data list to use:  sfc | plev | deriv | irrot
 #
 
 VARIABLES=(
@@ -87,6 +88,16 @@ VARIABLES=(
     "shear01_u:shear01_u:deriv"
     "shear01_v:shear01_v:deriv"
 
+    # --- irrotational wind + PV advection by it (compute_irrotational.py) ---
+    # 3-D irrot fields hold only 300/250/200 hPa: idx 0 = 300, 1 = 250, 2 = 200
+    "uchi_l:uchi_l:irrot"               # 300-200 hPa layer means
+    "vchi_l:vchi_l:irrot"
+    "pv_l:pv_l:irrot"
+    "pvadv_chi_l:pvadv_chi_l:irrot"     # K m2 kg-1 s-2; x 1e6 x 86400 = PVU/day
+    "chi250:chi(1):irrot"               # 250 hPa velocity potential
+    "uchi250:uchi(1):irrot"
+    "vchi250:vchi(1):irrot"
+    "pvadv_chi250:pvadv_chi(1):irrot"
 )
 
 # Populations:  "TAG:NODEFILE"   (TAG must not contain ':')
@@ -150,6 +161,8 @@ for pop_entry in "${POPULATIONS[@]}"; do
             datalist="${PLEV_LIST}"
         elif [[ "${listtag}" == "deriv" ]]; then
             datalist="${DERIV_LIST}"
+        elif [[ "${listtag}" == "irrot" ]]; then
+            datalist="${IRROT_LIST}"
         else
             datalist="${SFC_LIST}"
         fi
